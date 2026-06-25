@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { blocos, niveisResposta } from "@/lib/diagnosticoData";
 import type { NivelResposta } from "@/types/diagnostico";
 import { calculateResultadoDiagnostico } from "@/lib/calculos";
+import { saveDiagnostico, generateAndSaveRelatorio } from "@/lib/database";
 
 const initialRespostas = blocos.flatMap((bloco) =>
   bloco.itens.map((item) => ({ itemId: item.id, nivel: 0 as NivelResposta }))
@@ -14,6 +15,17 @@ export default function DiagnosticoPage() {
   const [report, setReport] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [userEmail, setUserEmail] = useState("");
+  const [emailInput, setEmailInput] = useState("");
+
+  // Load user email from localStorage on mount
+  useEffect(() => {
+    const savedEmail = localStorage.getItem("userEmail");
+    if (savedEmail) {
+      setUserEmail(savedEmail);
+      setEmailInput(savedEmail);
+    }
+  }, []);
 
   const resultado = useMemo(
     () => calculateResultadoDiagnostico(respostas),
@@ -28,25 +40,40 @@ export default function DiagnosticoPage() {
     );
   }
 
+  function handleSetEmail() {
+    if (emailInput.trim()) {
+      setUserEmail(emailInput);
+      localStorage.setItem("userEmail", emailInput);
+    }
+  }
+
   async function handleSubmit() {
+    if (!userEmail) {
+      setError("Por favor, insira seu email antes de continuar");
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setReport(null);
 
     try {
-      const response = await fetch("/api/relatorio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ respostas }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data?.error || "Erro ao gerar relatório");
+      // First, save the diagnostic to database
+      const diagnostico = await saveDiagnostico(userEmail, respostas, resultado);
+      if (!diagnostico || !diagnostico.id) {
+        throw new Error("Falha ao salvar diagnóstico");
       }
 
-      const data = await response.json();
-      setReport(data.report);
+      // Then, generate and save the report
+      const relatorio = await generateAndSaveRelatorio(
+        diagnostico.id,
+        userEmail
+      );
+      if (!relatorio) {
+        throw new Error("Falha ao gerar relatório");
+      }
+
+      setReport(relatorio.content);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -68,6 +95,51 @@ export default function DiagnosticoPage() {
             Use a escala de 4 níveis para indicar o grau de conformidade de cada item.
             Após enviar, a IA gera um relatório investigativo com análise de contradições.
           </p>
+
+          {/* Email Input Section */}
+          <div className="mt-6 rounded-2xl bg-[#F7EFE3] p-4">
+            <label className="block text-sm font-semibold text-[#1C0A00]">
+              Seu Email (para salvar relatório)
+            </label>
+            <div className="mt-3 flex gap-2">
+              <input
+                type="email"
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                placeholder="seu.email@exemplo.com"
+                disabled={userEmail !== ""}
+                className="flex-1 rounded-xl border border-[#D4BFA6] bg-white px-4 py-2 text-[#1C0A00] placeholder-[#99714C] disabled:bg-[#E8DCC8]"
+              />
+              {userEmail === "" && (
+                <button
+                  type="button"
+                  onClick={handleSetEmail}
+                  className="rounded-xl bg-[#B8860B] px-6 py-2 font-semibold text-white hover:bg-[#A4750A]"
+                >
+                  Confirmar
+                </button>
+              )}
+              {userEmail && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserEmail("");
+                    setEmailInput("");
+                    localStorage.removeItem("userEmail");
+                  }}
+                  className="rounded-xl bg-[#99714C] px-6 py-2 font-semibold text-white hover:bg-[#7A5838]"
+                >
+                  Mudar
+                </button>
+              )}
+            </div>
+            {userEmail && (
+              <p className="mt-2 text-sm text-green-700">
+                ✓ Email confirmado: {userEmail}
+              </p>
+            )}
+          </div>
+
           <div className="mt-6 grid gap-4 sm:grid-cols-2">
             <div className="rounded-2xl bg-[#F7EFE3] p-4">
               <p className="font-semibold">Score geral</p>
@@ -132,13 +204,15 @@ export default function DiagnosticoPage() {
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={loading}
+            disabled={loading || !userEmail}
             className="inline-flex items-center justify-center rounded-full bg-[#B8860B] px-8 py-4 text-sm font-semibold text-white transition hover:bg-[#A4750A] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? "Gerando relatório..." : "Gerar relatório IA"}
           </button>
           <p className="text-sm text-[#4B3B2D]">
-            Após gerar, o relatório será exibido abaixo. Pagamento e registros podem ser adicionados em seguida.
+            {!userEmail
+              ? "Insira seu email acima para gerar e salvar o relatório"
+              : "Após gerar, o relatório será salvo e exibido abaixo."}
           </p>
         </div>
 

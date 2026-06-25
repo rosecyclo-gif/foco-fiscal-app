@@ -1,5 +1,5 @@
 import { OpenAI } from "openai";
-import type { RespostaItem, ResultadoDiagnostico } from "@/types/diagnostico";
+import type { RespostaItem, ResultadoDiagnostico, NivelResposta } from "@/types/diagnostico";
 import { blocos } from "@/lib/diagnosticoData";
 
 function buildResponseSummary(respostas: RespostaItem) {
@@ -71,4 +71,47 @@ export async function generateAIReport(respostas: RespostaItem[], resultado: Res
   });
 
   return completion.choices?.[0]?.message?.content?.trim() ?? "Não foi possível gerar o relatório de IA.";
+}
+
+/**
+ * Generate a report from raw responses and resultado object
+ * Used by the database integration for saving reports
+ */
+export async function generateReport(
+  responses: Record<string, any>,
+  resultado: Record<string, any>
+): Promise<string | null> {
+  try {
+    // Convert responses to RespostaItem array format
+    // Handle both array and object formats
+    const respostaItems: RespostaItem[] = [];
+    
+    if (Array.isArray(responses)) {
+      // If it's already an array of RespostaItem
+      respostaItems.push(...(responses as RespostaItem[]));
+    } else {
+      // If it's an object, convert to array
+      for (const [key, value] of Object.entries(responses)) {
+        respostaItems.push({
+          itemId: key,
+          nivel: value as unknown as NivelResposta,
+        });
+      }
+    }
+
+    // Convert resultado to ResultadoDiagnostico format
+    const resultadoObj: ResultadoDiagnostico = {
+      respostas: respostaItems,
+      scoreGeral: resultado.scoreGeral ?? 0,
+      classificacaoMaturidade: resultado.classificacaoMaturidade ?? "Indefinida",
+      classificacaoRisco: resultado.classificacaoRisco ?? "Indefinido",
+      padraoPredominate: resultado.padraoPredominate ?? "Indefinido",
+      scoresPorBloco: resultado.scoresPorBloco ?? {},
+    };
+
+    return await generateAIReport(respostaItems, resultadoObj);
+  } catch (error) {
+    console.error("Error generating report:", error);
+    return null;
+  }
 }
